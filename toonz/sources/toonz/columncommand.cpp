@@ -39,6 +39,8 @@
 #include "toonz/fxcommand.h"
 #include "toonz/preferences.h"
 #include "toonz/tstageobjectid.h"
+#include "toonz/tstageobjectcmd.h"
+#include "toonz/txshpegbarcolumn.h"
 
 // TnzBase includes
 #include "tfx.h"
@@ -339,6 +341,16 @@ void deleteColumnsWithoutUndo(std::set<int> *indices,
     TXshColumn *column = xsh->getColumn(*it);
     if (column && column->getSoundColumn()) soundColumnRemoved = true;
     if (column && column->getFx()) app->getCurrentFx()->setFx(0);
+    if (column && column->getPegbarColumn()) {
+      std::vector<TStageObjectId> objIds;
+      std::list<QPair<TStageObjectId, TStageObjectId>> links;
+      std::list<int> splineIds;
+      objIds.push_back(column->getPegbarColumn()->getPegbarObjectId());
+      TStageObjectCmd::deleteSelection(
+          objIds, links, splineIds, app->getCurrentXsheet(),
+          app->getCurrentObject(), app->getCurrentFx(), false);
+      continue;
+    }
     xsh->removeColumn(*it);
   }
 

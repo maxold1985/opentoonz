@@ -2910,17 +2910,17 @@ void CellArea::drawPaletteCell(QPainter &p, int row, int col,
 
 void CellArea::drawPegbarColumn(QPainter &p, int r0, int r1, int col) {
   const Orientation *o = m_viewer->orientation();
-  TXsheet *xsh = m_viewer->getXsheet();
-  TXshColumn *column = xsh->getColumn(col);
+  TXsheet *xsh         = m_viewer->getXsheet();
+  TXshColumn *column   = xsh->getColumn(col);
   if (!column || !column->getPegbarColumn()) return;
 
-  QColor baseColor = m_viewer->getPegColor();
-  TCellSelection *cellSelection = m_viewer->getCellSelection();
+  QColor baseColor                  = m_viewer->getPegColor();
+  TCellSelection *cellSelection     = m_viewer->getCellSelection();
   TColumnSelection *columnSelection = m_viewer->getColumnSelection();
-  QPoint frameAdj = m_viewer->getFrameZoomAdjustment();
+  QPoint frameAdj                   = m_viewer->getFrameZoomAdjustment();
 
   for (int row = r0; row <= r1; ++row) {
-    QPoint xy = m_viewer->positionToXY(CellPosition(row, col));
+    QPoint xy      = m_viewer->positionToXY(CellPosition(row, col));
     QRect cellRect = o->rect(PredefinedRect::CELL).translated(xy);
     cellRect.adjust(0, 0, -frameAdj.x(), -frameAdj.y());
     bool selected = columnSelection->isColumnSelected(col) ||

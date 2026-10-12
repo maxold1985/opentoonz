@@ -1505,7 +1505,12 @@ void TStageObjectCmd::deleteSelection(
   std::vector<TStageObjectId>::const_iterator it2;
   for (it2 = objIds.begin(); it2 != objIds.end(); it2++) {
     if (it2->isColumn()) columnIndexes.append(it2->getIndex());
-    if (it2->isPegbar()) pegbarIndexes.append(it2->getIndex());
+    if (it2->isPegbar()) {
+      pegbarIndexes.append(it2->getIndex());
+      TXsheet *xsh           = xshHandle->getXsheet();
+      TXshColumn *pegbarCol  = xsh->getColumnForPegbarObjectId(*it2);
+      if (pegbarCol) columnIndexes.append(pegbarCol->getIndex());
+    }
     if (it2->isCamera()) cameraIndexes.append(it2->getIndex());
   }
   if (!columnIndexes.isEmpty()) {
