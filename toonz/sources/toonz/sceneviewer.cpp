@@ -3756,6 +3756,29 @@ TAffine SceneViewer::japanesePegBaseAffine() const {
   return result;
 }
 
+TAffine SceneViewer::japanesePegGhostAffine(int ghost) const {
+  TApp *app = TApp::instance();
+  OnionSkinMask osm = app->getCurrentOnionSkin()->getOnionSkinMask();
+  TAffine base = japanesePegBaseAffine();
+
+  // In a moving layer, the previous/next sheet has its own stage placement.
+  // Match the same frame that the existing Shift and Trace uses.
+  if (m_japanesePegFollowObject && app->getCurrentFrame()->isEditingScene()) {
+    TStageObjectId id = app->getCurrentObject()->getObjectId();
+    TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+    if (xsh && (id.isColumn() || id.isPegbar())) {
+      const int current = app->getCurrentFrame()->getFrame();
+      const int other = current + osm.getShiftTraceGhostFrameOffset(ghost);
+      if (other >= 0) {
+        const TAffine placement = xsh->getPlacement(id, current);
+        if (std::abs(placement.det()) > 1e-10)
+          base = xsh->getPlacement(id, other) * placement.inv() * base;
+      }
+    }
+  }
+  return osm.getShiftTraceGhostAff(ghost) * base;
+}
+
 void SceneViewer::drawJapanesePegBars() {
   if (!m_japanesePegVisible || m_drawCameraTest || m_draw3DMode ||
       m_isPicking || isPreviewEnabled()) return;
@@ -3775,7 +3798,7 @@ void SceneViewer::drawJapanesePegBars() {
   if (m_japanesePegShowGhosts) {
     for (int ghost = 0; ghost < 2; ++ghost) {
       glPushMatrix();
-      tglMultMatrix(getViewMatrix() * osm.getShiftTraceGhostAff(ghost) * base);
+      tglMultMatrix(getViewMatrix() * japanesePegGhostAffine(ghost));
       const bool active = m_japanesePegEditTarget == ghost + 1;
       if (ghost == 0)
         drawJapaneseRegistrationShape(unitsPerMm, 0.15f, 0.85f, 0.45f,
@@ -3807,7 +3830,7 @@ bool SceneViewer::beginJapanesePegBarDrag(const QPointF &widgetPos) {
 
   TAffine aff = japanesePegBaseAffine();
   if (m_japanesePegEditTarget)
-    aff = osm.getShiftTraceGhostAff(m_japanesePegEditTarget - 1) * aff;
+    aff = japanesePegGhostAffine(m_japanesePegEditTarget - 1);
   if (std::abs(aff.det()) < 1e-10) return false;
 
   const TPointD world = winToWorld(widgetPos * getDevPixRatio());
@@ -3855,7 +3878,8 @@ void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
     const int ghost = m_japanesePegEditTarget - 1;
     TAffine aff = osm.getShiftTraceGhostAff(ghost);
     if (rotate) {
-      const TPointD center = aff * japanesePegBaseAffine() * TPointD();
+      const TPointD center =
+          japanesePegGhostAffine(ghost) * TPointD();
       const double angle = (newWorld.x - previous.x) * 0.15;
       aff = TRotation(center, angle) * aff;
     } else {
@@ -3990,6 +4014,18 @@ void SceneViewer::addJapanesePegBarMenu(QMenu *menu) {
       GLInvalidateAll();
     });
   }
+
+  QAction *customOpacity = opacity->addAction(tr("Custom Opacity..."));
+  connect(customOpacity, &QAction::triggered, this, [this] {
+    bool ok = false;
+    const int value = QInputDialog::getInt(
+        this, tr("Japanese Peg Bar"), tr("Opacity (0-100%):"),
+        (int)(m_japanesePegOpacity * 100.0 + 0.5), 0, 100, 1, &ok);
+    if (ok) {
+      m_japanesePegOpacity = value / 100.0;
+      GLInvalidateAll();
+    }
+  });
 
   QAction *angle = pegMenu->addAction(tr("Set Peg Bar Rotation..."));
   connect(angle, &QAction::triggered, this, [this] {
