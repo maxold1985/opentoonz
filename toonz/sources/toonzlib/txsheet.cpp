@@ -34,6 +34,7 @@
 #include "orientation.h"
 #include "toonz/expressionreferencemonitor.h"
 #include "toonz/navigationtags.h"
+#include "toonz/txshpegbarcolumn.h"
 
 #include "toonz/txsheet.h"
 #include "toonz/preferences.h"
@@ -1413,6 +1414,30 @@ void TXsheet::moveColumn(int srcIndex, int dstIndex) {
 TXshColumn *TXsheet::getColumn(int col) const {
   if (col < 0) return m_cameraColumn.getPointer();
   return m_imp->m_columnSet.getColumn(col).getPointer();
+}
+
+TStageObjectId TXsheet::getColumnObjectId(int col) const {
+  if (col < 0) return TStageObjectId::CameraId(m_cameraColumnIndex);
+  TXshColumn *column = getColumn(col);
+  if (column && column->getPegbarColumn())
+    return column->getPegbarColumn()->getPegbarObjectId();
+  return TStageObjectId::ColumnId(col);
+}
+
+TXshColumn *TXsheet::getColumnForPegbarObjectId(
+    TStageObjectId pegbarId) const {
+  for (int col = 0; col < getColumnCount(); ++col) {
+    TXshColumn *column = getColumn(col);
+    if (column && column->getPegbarColumn() &&
+        column->getPegbarColumn()->getPegbarObjectId() == pegbarId)
+      return column;
+  }
+  return nullptr;
+}
+
+bool TXsheet::isPegbarColumn(int col) const {
+  TXshColumn *column = getColumn(col);
+  return column && column->getPegbarColumn();
 }
 
 //-----------------------------------------------------------------------------

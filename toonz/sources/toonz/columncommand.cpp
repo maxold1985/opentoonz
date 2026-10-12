@@ -39,6 +39,8 @@
 #include "toonz/fxcommand.h"
 #include "toonz/preferences.h"
 #include "toonz/tstageobjectid.h"
+#include "toonz/tstageobjectcmd.h"
+#include "toonz/txshpegbarcolumn.h"
 
 // TnzBase includes
 #include "tfx.h"
@@ -339,6 +341,16 @@ void deleteColumnsWithoutUndo(std::set<int> *indices,
     TXshColumn *column = xsh->getColumn(*it);
     if (column && column->getSoundColumn()) soundColumnRemoved = true;
     if (column && column->getFx()) app->getCurrentFx()->setFx(0);
+    if (column && column->getPegbarColumn()) {
+      std::vector<TStageObjectId> objIds;
+      std::list<QPair<TStageObjectId, TStageObjectId>> links;
+      std::list<int> splineIds;
+      objIds.push_back(column->getPegbarColumn()->getPegbarObjectId());
+      TStageObjectCmd::deleteSelection(
+          objIds, links, splineIds, app->getCurrentXsheet(),
+          app->getCurrentObject(), app->getCurrentFx(), false);
+      continue;
+    }
     xsh->removeColumn(*it);
   }
 
@@ -511,6 +523,13 @@ public:
     TApp *app    = TApp::instance();
     m_data       = new StageObjectsData();
     TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+    std::vector<TStageObjectId> pegbarIds;
+    for (int index : indices) {
+      TXshColumn *column = xsh->getColumn(index);
+      if (column && column->getPegbarColumn())
+        pegbarIds.push_back(column->getPegbarColumn()->getPegbarObjectId());
+    }
+    m_data->storeObjects(pegbarIds, xsh, 0);
     m_data->storeColumns(indices, xsh, 0);
     m_data->storeColumnFxs(indices, xsh, 0);
     std::set<int>::iterator it;
@@ -564,6 +583,7 @@ public:
 
 class DeleteColumnsUndo final : public TUndo {
   std::set<int> m_indices;
+  std::vector<TStageObjectId> m_objIds;
 
   QMap<TFxPort *, TFx *> m_columnFxLinks;
   QMap<TStageObjectId, QList<TStageObjectId>> m_columnObjChildren;
@@ -580,6 +600,12 @@ public:
     TApp *app    = TApp::instance();
     TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
 
+    for (int index : indices) {
+      TXshColumn *column = xsh->getColumn(index);
+      if (column && column->getPegbarColumn())
+        m_objIds.push_back(column->getPegbarColumn()->getPegbarObjectId());
+    }
+    m_data->storeObjects(m_objIds, xsh, 0);
     m_data->storeColumns(m_indices, xsh, 0);
     m_data->storeColumnFxs(m_indices, xsh, 0);
 
@@ -604,7 +630,7 @@ public:
 
       // Store TStageObject children
       int pegbarsCount     = xsh->getStageObjectTree()->getStageObjectCount();
-      TStageObjectId id    = TStageObjectId::ColumnId(*it);
+      TStageObjectId id    = xsh->getColumnObjectId(*it);
       TStageObject *pegbar = xsh->getStageObject(id);
       for (int i = 0; i < pegbarsCount; ++i) {
         TStageObject *other = xsh->getStageObjectTree()->getStageObject(i);
@@ -627,6 +653,7 @@ public:
     assert(!m_data.get());
     m_data.reset(new StageObjectsData);
 
+    m_data->storeObjects(m_objIds, xsh, 0);
     m_data->storeColumns(m_indices, xsh, 0);
     m_data->storeColumnFxs(m_indices, xsh, 0);
 
@@ -670,7 +697,8 @@ void doUnifyColumnVisibilityToggles_Recursive(const TXsheet *xsh,
     int colType = column->getColumnType();
     if (colType == TXshColumn::ePaletteType ||
         colType == TXshColumn::eSoundType ||
-        colType == TXshColumn::eSoundTextType)
+        colType == TXshColumn::eSoundTextType ||
+        colType == TXshColumn::ePegbarType)
       continue;
     // visibility check
     if (column->isPreviewVisible() != column->isCamstandVisible()) {
@@ -852,6 +880,15 @@ static void copyColumns_internal(const std::set<int> &indices) {
   StageObjectsData *data = new StageObjectsData;
 
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  std::vector<TStageObjectId> pegbarIds;
+  for (int index : indices) {
+    TXshColumn *column = xsh->getColumn(index);
+    if (column && column->getPegbarColumn())
+      pegbarIds.push_back(column->getPegbarColumn()->getPegbarObjectId());
+  }
+  data->storeObjects(pegbarIds, xsh,
+                     StageObjectsData::eDoClone |
+                         StageObjectsData::eResetFxDagPositions);
 
   data->storeColumns(
       indices, xsh,

@@ -20,6 +20,7 @@
 #include "toonz/txshzeraryfxcolumn.h"
 #include "toonz/tcolumnfx.h"
 #include "toonz/tstageobjectspline.h"
+#include "toonz/txshpegbarcolumn.h"
 
 #include "toonzqt/stageobjectsdata.h"
 
@@ -942,6 +943,8 @@ std::vector<TStageObjectId> StageObjectsData::restoreObjects(
   int index                    = -1;  // The actual column insertion index
 
   int i, elementsCount = m_elements.size();
+  std::set<TStageObjectId> pegbarObjects;
+  std::set<TStageObjectId> remappedPegbars;
   for (i = 0; i < elementsCount; ++i) {
     TStageObjectDataElement *element = m_elements[i];
 
@@ -953,11 +956,21 @@ std::vector<TStageObjectId> StageObjectsData::restoreObjects(
     // Restore the object depending on its specific type
     TStageObjectId restoredId = TStageObjectId::NoneId;
 
-    if (!cameraElement && !columnElement)
+    if (!cameraElement && !columnElement) {
+      TStageObjectId originalId = element->m_params->m_id;
       restoredId = element->restoreObject(xsh, pos != TConst::nowhere);
-    else if (cameraElement)
+      pegbarObjects.insert(restoredId);
+      if (originalId != restoredId) remappedPegbars.insert(originalId);
+    } else if (cameraElement)
       restoredId = cameraElement->restoreCamera(xsh, pos != TConst::nowhere);
     else if (columnElement) {
+      // The pasted Pegbar may have been assigned a different object ID.
+      if (columnElement->m_column &&
+          columnElement->m_column->getPegbarColumn() &&
+          remappedPegbars.count(columnElement->m_column->getPegbarColumn()
+                                    ->getPegbarObjectId()))
+        continue;
+
       // Build the column insertion index
       if (idxt != columnIndices.end())
         index = *idxt++;
@@ -969,6 +982,11 @@ std::vector<TStageObjectId> StageObjectsData::restoreObjects(
       // Restore the column element
       restoredId = columnElement->restoreColumn(xsh, index, fxFlags,
                                                 pos != TConst::nowhere);
+
+      if (columnElement->m_column &&
+          columnElement->m_column->getPegbarColumn())
+        pegbarObjects.erase(
+            columnElement->m_column->getPegbarColumn()->getPegbarObjectId());
 
       FxDag *fxDag = xsh->getFxDag();
 
@@ -1010,6 +1028,19 @@ std::vector<TStageObjectId> StageObjectsData::restoreObjects(
     // Remember stored/restored stage object pairings
     idTable[element->m_params->m_id] = restoredId;
     restoredIds.push_back(restoredId);
+  }
+
+  // Restore a matching Xsheet column for Pegbars with no associated column.
+  for (const TStageObjectId &pegbarId : pegbarObjects) {
+    if (idxt != columnIndices.end())
+      index = *idxt++;
+    else {
+      ++index;
+      columnIndices.insert(index);
+    }
+    TXshPegbarColumn *pegbarColumn = new TXshPegbarColumn();
+    pegbarColumn->setPegbarObjectId(pegbarId);
+    xsh->insertColumn(index, pegbarColumn);
   }
 
   // Apply stage object-parental relationships

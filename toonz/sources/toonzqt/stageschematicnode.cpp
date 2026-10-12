@@ -1510,7 +1510,18 @@ void StageSchematicNode::onClicked() {
   emit currentObjectChanged(id, false);
   if (id.isColumn())
     emit currentColumnChanged(id.getIndex());
-  else if (id.isCamera() || id.isPegbar() || id.isTable())
+  else if (id.isPegbar()) {
+    StageSchematicScene *stageScene =
+        dynamic_cast<StageSchematicScene *>(scene());
+    if (stageScene) {
+      TXsheet *xsh = stageScene->getXsheet();
+      if (xsh) {
+        TXshColumn *column = xsh->getColumnForPegbarObjectId(id);
+        if (column) emit currentColumnChanged(column->getIndex());
+      }
+    }
+    emit editObject();
+  } else if (id.isCamera() || id.isTable())
     emit editObject();
 }
 

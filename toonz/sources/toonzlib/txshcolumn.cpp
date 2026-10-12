@@ -11,6 +11,7 @@
 #include "toonz/txshzeraryfxcolumn.h"
 #include "toonz/txshsoundtextcolumn.h"
 #include "toonz/txshmeshcolumn.h"
+#include "toonz/txshpegbarcolumn.h"
 #include "toonz/txshcell.h"
 #include "toonz/txsheet.h"
 #include "toonz/fxdag.h"
@@ -507,6 +508,8 @@ TXshColumn *TXshColumn::createEmpty(int type) {
     return new TXshSoundTextColumn;
   case eMeshType:
     return new TXshMeshColumn;
+  case ePegbarType:
+    return new TXshPegbarColumn;
   }
 
   assert(type == eLevelType);

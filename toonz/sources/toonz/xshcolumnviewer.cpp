@@ -832,7 +832,9 @@ void ColumnArea::DrawHeader::levelColors(QColor &columnColor,
   enum { Normal, Reference, Control } usage = Reference;
   if (column) {
     if (column->isControl()) usage = Control;
-    if (column->isRendered() || column->getMeshColumn()) usage = Normal;
+    if (column->isRendered() || column->getMeshColumn() ||
+        column->getPegbarColumn())
+      usage = Normal;
   }
 
   if (reservedLevel) {
@@ -948,7 +950,7 @@ void ColumnArea::DrawHeader::drawEye() const {
   else
     p.setPen(m_viewer->getTimelineIconLineColor());  // Preview border color
 
-  if (col < 0 || column->getSoundTextColumn()) {
+  if (col < 0 || column->getSoundTextColumn() || column->getPegbarColumn()) {
     if (o->flag(PredefinedFlag::EYE_AREA_BORDER)) p.drawRect(prevViewRect);
     return;
   }
@@ -991,7 +993,8 @@ void ColumnArea::DrawHeader::drawPreviewToggle(int opacity) const {
   else
     p.setPen(m_viewer->getTimelineIconLineColor());  // Camstand border color
 
-  if (col < 0 || column->getPaletteColumn() || column->getSoundTextColumn()) {
+  if (col < 0 || column->getPaletteColumn() || column->getSoundTextColumn() ||
+      column->getPegbarColumn()) {
     if (o->flag(PredefinedFlag::PREVIEW_LAYER_AREA_BORDER))
       p.drawRect(tableViewRect);
     return;
@@ -1038,7 +1041,8 @@ void ColumnArea::DrawHeader::drawUnifiedViewToggle(int opacity) const {
   else
     p.setPen(m_viewer->getTimelineIconLineColor());  // border color
 
-  if (col < 0 || column->getPaletteColumn() || column->getSoundTextColumn()) {
+  if (col < 0 || column->getPaletteColumn() || column->getSoundTextColumn() ||
+      column->getPegbarColumn()) {
     if (o->flag(PredefinedFlag::PREVIEW_LAYER_AREA_BORDER))
       p.drawRect(unifiedViewRect);
     return;
@@ -1816,6 +1820,12 @@ QPixmap ColumnArea::getColumnIcon(int columnIndex) {
   TXsheet *xsh = m_viewer->getXsheet();
   if (!xsh) return QPixmap();
   if (xsh->isColumnEmpty(columnIndex)) return QPixmap();
+  if (TXshColumn *column = xsh->getColumn(columnIndex)) {
+    if (column->getPegbarColumn()) {
+      static QPixmap pegbar = svgToPixmap(":Resources/pegbar_header.svg");
+      return pegbar;
+    }
+  }
   int r0, r1;
   xsh->getCellRange(columnIndex, r0, r1);
   if (r0 > r1) return QPixmap();
