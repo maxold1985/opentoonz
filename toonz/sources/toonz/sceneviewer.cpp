@@ -3785,9 +3785,6 @@ void SceneViewer::drawJapanesePegBars() {
 
   const double unitsPerMm = Stage::inch / 25.4;
   const TAffine base = japanesePegBaseAffine();
-  const OnionSkinMask osm =
-      TApp::instance()->getCurrentOnionSkin()->getOnionSkinMask();
-
   glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT |
                GL_LINE_BIT | GL_DEPTH_BUFFER_BIT);
   glDisable(GL_DEPTH_TEST);
@@ -3909,7 +3906,6 @@ void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
     }
   } else {
     // A registration-only adjustment does not modify the source drawing.
-    const TAffine base = japanesePegBaseAffine();
     if (m_japanesePegFollowObject) {
       TApp *app = TApp::instance();
       const TStageObjectId id = app->getCurrentObject()->getObjectId();
@@ -3926,7 +3922,6 @@ void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
         m_japanesePegOffset += newWorld - previous;
     } else
       m_japanesePegOffset += newWorld - previous;
-    (void)base;
   }
   GLInvalidateAll();
 }
