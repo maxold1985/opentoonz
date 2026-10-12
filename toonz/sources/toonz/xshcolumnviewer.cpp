@@ -950,8 +950,7 @@ void ColumnArea::DrawHeader::drawEye() const {
   else
     p.setPen(m_viewer->getTimelineIconLineColor());  // Preview border color
 
-  if (col < 0 || column->getSoundTextColumn() ||
-      column->getPegbarColumn()) {
+  if (col < 0 || column->getSoundTextColumn() || column->getPegbarColumn()) {
     if (o->flag(PredefinedFlag::EYE_AREA_BORDER)) p.drawRect(prevViewRect);
     return;
   }
