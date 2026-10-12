@@ -355,6 +355,7 @@ protected:
   void drawOverlay();
   void drawJapanesePegBars();
   TAffine japanesePegBaseAffine() const;
+  TAffine japanesePegGhostAffine(int ghost) const;
   void addJapanesePegBarMenu(QMenu *menu);
   bool beginJapanesePegBarDrag(const QPointF &widgetPos);
   void dragJapanesePegBar(const QPointF &widgetPos, bool rotate);
