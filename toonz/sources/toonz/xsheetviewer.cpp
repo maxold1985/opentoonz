@@ -140,6 +140,12 @@ void XsheetViewer::getCellTypeAndColors(int &ltype, QColor &cellColor,
 void XsheetViewer::getColumnColor(QColor &color, QColor &sideColor, int index,
                                   TXsheet *xsh) {
   if (index < 0 || xsh->isColumnEmpty(index)) return;
+  TXshColumn *column = xsh->getColumn(index);
+  if (column && column->getPegbarColumn()) {
+    color     = m_pegColor;
+    sideColor = m_pegColor.darker(130);
+    return;
+  }
   int r0, r1;
   xsh->getCellRange(index, r0, r1);
   if (0 <= r0 && r0 <= r1) {

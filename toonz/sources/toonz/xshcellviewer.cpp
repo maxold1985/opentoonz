@@ -1334,21 +1334,23 @@ void CellArea::drawCells(QPainter &p, const QRect toBeUpdated) {
     bool isSoundColumn     = false;
     bool isPaletteColumn   = false;
     bool isSoundTextColumn = false;
+    bool isPegbarColumn    = false;
     bool showLevelName     = true;
     if (isColumn) {
       isSoundColumn     = column->getSoundColumn() != 0;
       isPaletteColumn   = column->getPaletteColumn() != 0;
       isSoundTextColumn = column->getSoundTextColumn() != 0;
+      isPegbarColumn    = column->getPegbarColumn() != nullptr;
       if (Preferences::instance()->getLevelNameDisplayType() ==
           Preferences::ShowLevelNameOnColumnHeader) {
         std::string columnName = "";
-        if (col >= 0 && xsh->getStageObject(TStageObjectId::ColumnId(col))
+        if (col >= 0 && xsh->getStageObject(xsh->getColumnObjectId(col))
                             ->hasSpecifiedName())
           columnName =
-              xsh->getStageObject(TStageObjectId::ColumnId(col))->getName();
+              xsh->getStageObject(xsh->getColumnObjectId(col))->getName();
         showLevelName =
             (isSoundColumn || isPaletteColumn || isSoundTextColumn ||
-             !checkContainsSingleLevel(column, columnName));
+             isPegbarColumn || !checkContainsSingleLevel(column, columnName));
       }
     }
     // check if the column is reference
@@ -1361,6 +1363,8 @@ void CellArea::drawCells(QPainter &p, const QRect toBeUpdated) {
 
     if (isSoundTextColumn)
       drawSoundTextColumn(p, r0, r1, col);
+    else if (isPegbarColumn)
+      drawPegbarColumn(p, r0, r1, col);
     else {
       // for each frame
       for (row = r0; row <= r1; row++) {
@@ -2899,6 +2903,36 @@ void CellArea::drawPaletteCell(QPainter &p, int row, int col,
     p.setBrush(markColor);
     p.setPen(Qt::NoPen);
     p.drawEllipse(markRect);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void CellArea::drawPegbarColumn(QPainter &p, int r0, int r1, int col) {
+  const Orientation *o = m_viewer->orientation();
+  TXsheet *xsh = m_viewer->getXsheet();
+  TXshColumn *column = xsh->getColumn(col);
+  if (!column || !column->getPegbarColumn()) return;
+
+  QColor baseColor = m_viewer->getPegColor();
+  TCellSelection *cellSelection = m_viewer->getCellSelection();
+  TColumnSelection *columnSelection = m_viewer->getColumnSelection();
+  QPoint frameAdj = m_viewer->getFrameZoomAdjustment();
+
+  for (int row = r0; row <= r1; ++row) {
+    QPoint xy = m_viewer->positionToXY(CellPosition(row, col));
+    QRect cellRect = o->rect(PredefinedRect::CELL).translated(xy);
+    cellRect.adjust(0, 0, -frameAdj.x(), -frameAdj.y());
+    bool selected = columnSelection->isColumnSelected(col) ||
+                    cellSelection->isCellSelected(row, col);
+    QColor tint = selected ? baseColor.lighter(140) : baseColor;
+    tint.setAlpha(65);
+    p.fillRect(cellRect.adjusted(0, 0, -1, -1), tint);
+    drawFrameSeparator(p, row, col, false);
+    if (TApp::instance()->getCurrentFrame()->isEditingScene() &&
+        row == m_viewer->getCurrentRow() &&
+        Preferences::instance()->isCurrentTimelineIndicatorEnabled())
+      drawCurrentTimeIndicator(p, xy, col);
   }
 }
 
