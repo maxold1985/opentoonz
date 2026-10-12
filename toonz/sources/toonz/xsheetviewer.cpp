@@ -548,7 +548,7 @@ int XsheetViewer::getCurrentRow() const {
 TStageObjectId XsheetViewer::getObjectId(int col) const {
   TXsheet *xsh = getXsheet();
   if (col < 0) return TStageObjectId::CameraId(xsh->getCameraColumnIndex());
-  return TStageObjectId::ColumnId(col);
+  return xsh->getColumnObjectId(col);
 }
 //-----------------------------------------------------------------------------
 
@@ -563,8 +563,8 @@ void XsheetViewer::setCurrentColumn(int col) {
     if (col >= 0 && objectHandle->isSpline()) objectHandle->setIsSpline(false);
     updateCellColumnAree();
     if (col >= 0) {
-      objectHandle->setObjectId(TStageObjectId::ColumnId(col));
       TXsheet *xsh       = getXsheet();
+      objectHandle->setObjectId(xsh->getColumnObjectId(col));
       TXshColumn *column = xsh->getColumn(col);
       if (!column) return;
       // switching the current fx

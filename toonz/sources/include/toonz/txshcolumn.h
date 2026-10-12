@@ -30,6 +30,7 @@ class TXshCellColumn;
 class TXshPaletteColumn;
 class TXshZeraryFxColumn;
 class TXshMeshColumn;
+class TXshPegbarColumn;
 class TXsheet;
 class TXshCell;
 class TFx;
@@ -112,7 +113,8 @@ Constructs a TXshColumn with default value.
     eSoundTextType,
     eZeraryFxType,
     ePaletteType,
-    eMeshType
+    eMeshType,
+    ePegbarType
   };
 
   virtual ColumnType getColumnType() const = 0;
@@ -133,6 +135,7 @@ Constructs a TXshColumn with default value.
   virtual TXshPaletteColumn *getPaletteColumn() { return 0; }
   virtual TXshZeraryFxColumn *getZeraryFxColumn() { return 0; }
   virtual TXshMeshColumn *getMeshColumn() { return 0; }
+  virtual TXshPegbarColumn *getPegbarColumn() { return nullptr; }
 
   virtual int getMaxFrame() const = 0;
 

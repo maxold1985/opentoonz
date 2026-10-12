@@ -30,6 +30,7 @@ set(MOC_HEADERS
     ../include/toonz/txshlevelhandle.h
     ../include/toonz/txshsimplelevel.h
     ../include/toonz/txshsoundcolumn.h
+    ../include/toonz/txshpegbarcolumn.h
 )
 
 set(HEADERS
@@ -328,6 +329,7 @@ set(SOURCES
     boardsettings.cpp
     filepathproperties.cpp
     navigationtags.cpp
+    txshpegbarcolumn.cpp
 )
 
 if(BUILD_TARGET_WIN)

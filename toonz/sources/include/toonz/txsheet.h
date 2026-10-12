@@ -491,6 +491,10 @@ in TXsheetImp.
    * index.
    */
   TXshColumn *getColumn(int index) const;
+  // Stage object represented by a column, including Pegbar columns.
+  TStageObjectId getColumnObjectId(int index) const;
+  TXshColumn *getColumnForPegbarObjectId(TStageObjectId pegbarId) const;
+  bool isPegbarColumn(int index) const;
   /*! Returns xsheet column count, i.e the number of xsheet column used, it
      calls
           \b TColumnSetT::getColumnCount().
