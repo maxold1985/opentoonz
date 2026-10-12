@@ -40,6 +40,7 @@ class QOpenGLFramebufferObject;
 class LutCalibrator;
 class StopMotion;
 class QElapsedTimer;
+class TXsheet;
 
 namespace ImageUtils {
 class FullScreenWidget;
