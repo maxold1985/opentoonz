@@ -3800,7 +3800,7 @@ TAffine SceneViewer::japanesePegGhostAffine(int ghost) const {
   if (!app || !app->getCurrentOnionSkin() || ghost < 0 || ghost > 1)
     return base;
 
-  const OnionSkinMask osm =
+  OnionSkinMask osm =
       app->getCurrentOnionSkin()->getOnionSkinMask();
   if (!osm.isShiftTraceEnabled()) return base;
 
