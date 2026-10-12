@@ -489,6 +489,11 @@ void SceneViewer::onEnter() {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::mouseMoveEvent(QMouseEvent *event) {
+  if (m_japanesePegDragging) {
+    dragJapanesePegBar(event->localPos(), event->modifiers() & Qt::ShiftModifier);
+    event->accept();
+    return;
+  }
   // if this is called just after tabletEvent, skip the execution
   if (m_tabletEvent) return;
   // and touchscreens but not touchpads...
@@ -723,6 +728,13 @@ void SceneViewer::onMove(const TMouseEvent &event) {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::mousePressEvent(QMouseEvent *event) {
+  // Registration is picked before painting tools, so a peg-bar drag cannot
+  // accidentally begin an ink stroke on the animation drawing.
+  if (event->button() == Qt::LeftButton && !m_tabletEvent &&
+      beginJapanesePegBarDrag(event->localPos())) {
+    event->accept();
+    return;
+  }
   // source can be useful for detecting touch vs mouse,
   // but has reports of being unreliable on mac
   // so m_gestureActive is the marker for rejecting touch events
@@ -881,6 +893,11 @@ void SceneViewer::onPress(const TMouseEvent &event) {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::mouseReleaseEvent(QMouseEvent *event) {
+  if (m_japanesePegDragging && event->button() == Qt::LeftButton) {
+    endJapanesePegBarDrag();
+    event->accept();
+    return;
+  }
   // if this is called just after tabletEvent, skip the execution
   if (m_tabletEvent) {
     // mouseRelease should not clear flag if we are starting or in middle of
@@ -1795,6 +1812,7 @@ void SceneViewer::onContextMenu(const QPoint &pos, const QPoint &globalPos) {
     columnIndices.push_back(i);
 
   SceneViewerContextMenu *menu = new SceneViewerContextMenu(this);
+  addJapanesePegBarMenu(menu);
 
   TTool *tool = TApp::instance()->getCurrentTool()->getTool();
   TPointD p   = ((tool) ? tool->getMatrix().inv() : TAffine()) *
