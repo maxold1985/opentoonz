@@ -7,7 +7,8 @@ concurrency:
 on:
   push:
     branches:
-      - master  # Specify branches where the workflow should run
+      - master
+      - 'feature/**'
     paths:
       - '**/*'                                    # Include all files in the repository
       - '!appveyor.yml'                           # Ignore changes in AppVeyor
@@ -15,6 +16,7 @@ on:
       - '!doc/**'                                 # Exclude documentation
       - '!**/.github/**'                          # Exclude everything in .github folder
       - '.github/workflows/workflow_windows.yml'  # Include Windows workflow file
+  workflow_dispatch:
   pull_request:
     paths:
       - '**/*'
@@ -32,7 +34,7 @@ jobs:
       QT_PATH: ${{ github.workspace }}\thirdparty\qt\5.15.2_wintab\msvc2019_64  # Path to custom Qt
 
       # Visual Studio related variables
-      MSVCVERSION: "Visual Studio 18 2026"  # Visual Studio version
+      MSVCVERSION: "Visual Studio 17 2022"  # Visual Studio version
       
       # Boost-related variables      
       BOOST_TOOLSET: "14.3"                 # Boost MSVC Toolset version
@@ -100,7 +102,7 @@ jobs:
           copy /Y libpng-1.6.21\scripts\pnglibconf.h.prebuilt libpng-1.6.21\pnglibconf.h
 
           cd ../toonz
-          rmdir /S /Q build
+          if exist build rmdir /S /Q build
           mkdir build
           cd build
 
@@ -138,8 +140,8 @@ jobs:
           REM Deploy Qt dependencies
           "%QT_PATH%\bin\windeployqt.exe" Opentoonz\Opentoonz.exe --opengl
           
-          del /Q Opentoonz\*.pdb  REM Remove .pdb files
-          del /Q Opentoonz\vc_redist.x64.exe REM Remove vc_redist.x64.exe file
+          if exist Opentoonz\*.pdb del /Q Opentoonz\*.pdb
+          if exist Opentoonz\vc_redist.x64.exe del /Q Opentoonz\vc_redist.x64.exe
           
           REM Create portablestuff directory and copy stuff folder
           mkdir Opentoonz\portablestuff
