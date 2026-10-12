@@ -3648,6 +3648,23 @@ void SceneViewer::registerContext() {
 
 namespace {
 
+// Reject invalid scene and transform data before sending coordinates to OpenGL
+// or inverting an affine. A driver reset must never be used as error handling.
+bool japanesePegFinitePoint(const TPointD &p) {
+  return std::isfinite(p.x) && std::isfinite(p.y);
+}
+
+bool japanesePegFiniteAffine(const TAffine &a) {
+  return std::isfinite(a.a11) && std::isfinite(a.a12) &&
+         std::isfinite(a.a13) && std::isfinite(a.a21) &&
+         std::isfinite(a.a22) && std::isfinite(a.a23);
+}
+
+bool japanesePegInvertibleAffine(const TAffine &a) {
+  return japanesePegFiniteAffine(a) && std::isfinite(a.det()) &&
+         std::abs(a.det()) > 1e-10;
+}
+
 // A stage-object movement is a real Xsheet edit; keep it separately undoable.
 // Merely displaying or moving the registration overlay never changes artwork.
 class JapanesePegMoveUndo final : public TUndo {
@@ -3658,9 +3675,12 @@ class JapanesePegMoveUndo final : public TUndo {
 
   void apply(double x, double y) const {
     TApp *app = TApp::instance();
-    if (app->getCurrentXsheet()->getXsheet() != m_xsheet) return;
+    if (!app || !app->getCurrentXsheet() || !app->getCurrentObject() ||
+        !app->getCurrentScene() ||
+        app->getCurrentXsheet()->getXsheet() != m_xsheet) return;
     TStageObject *obj = m_xsheet->getStageObject(m_id);
-    if (!obj || obj->isLocked()) return;
+    if (!obj || obj->isLocked() || m_frame < 0 ||
+        !std::isfinite(x) || !std::isfinite(y)) return;
     obj->setParam(TStageObject::T_X, m_frame, x);
     obj->setParam(TStageObject::T_Y, m_frame, y);
     app->getCurrentObject()->notifyObjectIdChanged(false);
@@ -3736,66 +3756,118 @@ void drawJapaneseRegistrationShape(double unitsPerMm, float red, float green,
 
 TAffine SceneViewer::japanesePegBaseAffine() const {
   TApp *app = TApp::instance();
+  if (!app || !app->getCurrentScene() || !app->getCurrentFrame() ||
+      !app->getCurrentObject() || !app->getCurrentXsheet())
+    return TAffine();
+
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene || !scene->getCurrentCamera()) return TAffine();
 
   const TRectD paper = scene->getCurrentCamera()->getStageRect();
+  if (!std::isfinite(paper.x0) || !std::isfinite(paper.y0) ||
+      !std::isfinite(paper.x1) || !std::isfinite(paper.y1) ||
+      !japanesePegFinitePoint(m_japanesePegOffset) ||
+      !std::isfinite(m_japanesePegRotation))
+    return TAffine();
+
   const TPointD anchor((paper.x0 + paper.x1) * 0.5,
                        paper.y1 - 0.35 * Stage::inch);
+  if (!japanesePegFinitePoint(anchor)) return TAffine();
+
   TAffine result = TTranslation(anchor + m_japanesePegOffset) *
                    TRotation(m_japanesePegRotation);
+  if (!japanesePegFiniteAffine(result)) return TAffine();
 
   if (m_japanesePegFollowObject && app->getCurrentFrame()->isEditingScene()) {
     const TStageObjectId id = app->getCurrentObject()->getObjectId();
-    if (id.isColumn() || id.isPegbar()) {
-      TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
-      if (xsh) result = xsh->getPlacement(id, app->getCurrentFrame()->getFrame()) *
-                         result;
+    TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+    if (xsh && (id.isColumn() || id.isPegbar()) &&
+        xsh->getStageObject(id)) {
+      const TAffine placement =
+          xsh->getPlacement(id, app->getCurrentFrame()->getFrame());
+      if (japanesePegFiniteAffine(placement)) {
+        const TAffine transformed = placement * result;
+        if (japanesePegFiniteAffine(transformed)) result = transformed;
+      }
     }
   }
   return result;
 }
 
 TAffine SceneViewer::japanesePegGhostAffine(int ghost) const {
+  const TAffine base = japanesePegBaseAffine();
   TApp *app = TApp::instance();
-  OnionSkinMask osm = app->getCurrentOnionSkin()->getOnionSkinMask();
-  TAffine base = japanesePegBaseAffine();
+  if (!app || !app->getCurrentOnionSkin() || ghost < 0 || ghost > 1)
+    return base;
 
-  // In a moving layer, the previous/next sheet has its own stage placement.
-  // Match the same frame that the existing Shift and Trace uses.
-  if (m_japanesePegFollowObject && app->getCurrentFrame()->isEditingScene()) {
-    TStageObjectId id = app->getCurrentObject()->getObjectId();
+  const OnionSkinMask osm =
+      app->getCurrentOnionSkin()->getOnionSkinMask();
+  if (!osm.isShiftTraceEnabled()) return base;
+
+  TAffine placed = base;
+  if (m_japanesePegFollowObject && app->getCurrentFrame() &&
+      app->getCurrentObject() && app->getCurrentXsheet() &&
+      app->getCurrentFrame()->isEditingScene()) {
+    const TStageObjectId id = app->getCurrentObject()->getObjectId();
     TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
-    if (xsh && (id.isColumn() || id.isPegbar())) {
+    if (xsh && (id.isColumn() || id.isPegbar()) &&
+        xsh->getStageObject(id)) {
       const int current = app->getCurrentFrame()->getFrame();
-      const int other = current + osm.getShiftTraceGhostFrameOffset(ghost);
-      if (other >= 0) {
-        const TAffine placement = xsh->getPlacement(id, current);
-        if (std::abs(placement.det()) > 1e-10)
-          base = xsh->getPlacement(id, other) * placement.inv() * base;
+      const int offset  = osm.getShiftTraceGhostFrameOffset(ghost);
+      const long long other = (long long)current + offset;
+      if (current >= 0 && other >= 0 && other <= 1000000) {
+        const TAffine currentPlacement = xsh->getPlacement(id, current);
+        if (japanesePegInvertibleAffine(currentPlacement)) {
+          const TAffine otherPlacement =
+              xsh->getPlacement(id, (int)other);
+          if (japanesePegFiniteAffine(otherPlacement)) {
+            const TAffine transformed =
+                otherPlacement * currentPlacement.inv() * base;
+            if (japanesePegFiniteAffine(transformed)) placed = transformed;
+          }
+        }
       }
     }
   }
-  return osm.getShiftTraceGhostAff(ghost) * base;
+  const TAffine ghostAff = osm.getShiftTraceGhostAff(ghost);
+  if (!japanesePegFiniteAffine(ghostAff)) return base;
+  const TAffine result = ghostAff * placed;
+  return japanesePegFiniteAffine(result) ? result : base;
 }
 
 void SceneViewer::drawJapanesePegBars() {
   if (!m_japanesePegVisible || m_drawCameraTest || m_draw3DMode ||
       m_isPicking || isPreviewEnabled()) return;
 
+  TApp *app = TApp::instance();
+  if (!app || !app->getCurrentScene() ||
+      !app->getCurrentScene()->getScene() ||
+      !app->getCurrentScene()->getScene()->getCurrentCamera()) return;
+
   const double unitsPerMm = Stage::inch / 25.4;
+  if (!std::isfinite(unitsPerMm) || unitsPerMm <= 0.0) return;
   const TAffine base = japanesePegBaseAffine();
+  const TAffine view = getViewMatrix();
+  if (!japanesePegFiniteAffine(base) ||
+      !japanesePegFiniteAffine(view)) return;
+
+  // Explicitly select modelview, and restore OpenGL matrix mode, blend,
+  // depth, line width and current color when the overlay is finished.
   glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT |
-               GL_LINE_BIT | GL_DEPTH_BUFFER_BIT);
+               GL_LINE_BIT | GL_DEPTH_BUFFER_BIT | GL_TRANSFORM_BIT);
+  glMatrixMode(GL_MODELVIEW);
   glDisable(GL_DEPTH_TEST);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  // Draw adjacent registered papers before the current sheet.
-  if (m_japanesePegShowGhosts) {
+  // Ghost transforms are valid only while Shift and Trace is enabled.
+  if (m_japanesePegShowGhosts && app->getCurrentOnionSkin() &&
+      app->getCurrentOnionSkin()->getOnionSkinMask().isShiftTraceEnabled()) {
     for (int ghost = 0; ghost < 2; ++ghost) {
+      const TAffine ghostMatrix = view * japanesePegGhostAffine(ghost);
+      if (!japanesePegFiniteAffine(ghostMatrix)) continue;
       glPushMatrix();
-      tglMultMatrix(getViewMatrix() * japanesePegGhostAffine(ghost));
+      tglMultMatrix(ghostMatrix);
       const bool active = m_japanesePegEditTarget == ghost + 1;
       if (ghost == 0)
         drawJapaneseRegistrationShape(unitsPerMm, 0.15f, 0.85f, 0.45f,
@@ -3809,29 +3881,48 @@ void SceneViewer::drawJapanesePegBars() {
     }
   }
 
-  glPushMatrix();
-  tglMultMatrix(getViewMatrix() * base);
-  drawJapaneseRegistrationShape(unitsPerMm, 0.30f, 0.65f, 1.0f,
-                                (float)m_japanesePegOpacity,
-                                m_japanesePegEditTarget == 0);
-  glPopMatrix();
+  const TAffine currentMatrix = view * base;
+  if (japanesePegFiniteAffine(currentMatrix)) {
+    glPushMatrix();
+    tglMultMatrix(currentMatrix);
+    drawJapaneseRegistrationShape(unitsPerMm, 0.30f, 0.65f, 1.0f,
+                                  (float)m_japanesePegOpacity,
+                                  m_japanesePegEditTarget == 0);
+    glPopMatrix();
+  }
   glPopAttrib();
 }
 
 bool SceneViewer::beginJapanesePegBarDrag(const QPointF &widgetPos) {
   if (!m_japanesePegVisible || isPreviewEnabled() || is3DView() ||
-      m_freezedStatus != NO_FREEZED) return false;
-  const OnionSkinMask osm =
-      TApp::instance()->getCurrentOnionSkin()->getOnionSkinMask();
-  if (m_japanesePegEditTarget != 0 && !osm.isShiftTraceEnabled()) return false;
+      m_drawCameraTest || m_isPicking ||
+      m_freezedStatus != NO_FREEZED || m_japanesePegDragging)
+    return false;
+
+  TApp *app = TApp::instance();
+  if (!app || !app->getCurrentScene() || !app->getCurrentFrame() ||
+      !app->getCurrentObject() || !app->getCurrentXsheet() ||
+      !app->getCurrentOnionSkin() ||
+      !app->getCurrentScene()->getScene() ||
+      !app->getCurrentScene()->getScene()->getCurrentCamera() ||
+      m_japanesePegEditTarget < 0 || m_japanesePegEditTarget > 2)
+    return false;
+
+  const OnionSkinMask osm = app->getCurrentOnionSkin()->getOnionSkinMask();
+  if (m_japanesePegEditTarget != 0 && !osm.isShiftTraceEnabled())
+    return false;
 
   TAffine aff = japanesePegBaseAffine();
   if (m_japanesePegEditTarget)
     aff = japanesePegGhostAffine(m_japanesePegEditTarget - 1);
-  if (std::abs(aff.det()) < 1e-10) return false;
+  if (!japanesePegInvertibleAffine(aff) || getDevPixRatio() <= 0)
+    return false;
 
   const TPointD world = winToWorld(widgetPos * getDevPixRatio());
+  if (!japanesePegFinitePoint(world)) return false;
   const TPointD local = aff.inv() * world;
+  if (!japanesePegFinitePoint(local)) return false;
+
   const double unitsPerMm = Stage::inch / 25.4;
   const double halfWidth  = 60.0 * unitsPerMm;
   const double halfHeight = 7.0 * unitsPerMm;
@@ -3842,21 +3933,27 @@ bool SceneViewer::beginJapanesePegBarDrag(const QPointF &widgetPos) {
   m_japanesePegLastWorld = world;
   m_japanesePegDragObjectId = TStageObjectId::NoneId;
   m_japanesePegDragFrame = -1;
+  m_japanesePegDragXsheet = nullptr;
 
   if (m_japanesePegEditTarget == 0 && m_japanesePegMoveObject &&
       m_japanesePegFollowObject &&
-      TApp::instance()->getCurrentFrame()->isEditingScene()) {
-    TStageObjectId id = TApp::instance()->getCurrentObject()->getObjectId();
+      app->getCurrentFrame()->isEditingScene()) {
+    const TStageObjectId id = app->getCurrentObject()->getObjectId();
     if (id.isColumn() || id.isPegbar()) {
-      TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+      TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
       TStageObject *obj = xsh ? xsh->getStageObject(id) : nullptr;
-      if (obj && !obj->isLocked() && obj->getStatus() == TStageObject::XY) {
-        m_japanesePegDragObjectId = id;
-        m_japanesePegDragFrame = TApp::instance()->getCurrentFrame()->getFrame();
-        m_japanesePegDragOldX =
-            obj->getParam(TStageObject::T_X, m_japanesePegDragFrame);
-        m_japanesePegDragOldY =
-            obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame);
+      const int frame = app->getCurrentFrame()->getFrame();
+      if (obj && !obj->isLocked() && obj->getStatus() == TStageObject::XY &&
+          frame >= 0) {
+        const double x = obj->getParam(TStageObject::T_X, frame);
+        const double y = obj->getParam(TStageObject::T_Y, frame);
+        if (std::isfinite(x) && std::isfinite(y)) {
+          m_japanesePegDragXsheet = xsh;
+          m_japanesePegDragObjectId = id;
+          m_japanesePegDragFrame = frame;
+          m_japanesePegDragOldX = x;
+          m_japanesePegDragOldY = y;
+        }
       }
     }
   }
@@ -3865,63 +3962,107 @@ bool SceneViewer::beginJapanesePegBarDrag(const QPointF &widgetPos) {
 
 void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
   if (!m_japanesePegDragging) return;
-  TPointD newWorld = winToWorld(widgetPos * getDevPixRatio());
+  TApp *app = TApp::instance();
+  if (!app || !app->getCurrentScene() || !app->getCurrentFrame() ||
+      !app->getCurrentObject() || !app->getCurrentXsheet() ||
+      !app->getCurrentOnionSkin() ||
+      !app->getCurrentScene()->getScene()) {
+    m_japanesePegDragging = false;
+    m_japanesePegDragXsheet = nullptr;
+    m_japanesePegDragObjectId = TStageObjectId::NoneId;
+    return;
+  }
+
+  const TPointD newWorld = winToWorld(widgetPos * getDevPixRatio());
+  if (!japanesePegFinitePoint(newWorld) ||
+      !japanesePegFinitePoint(m_japanesePegLastWorld)) return;
   const TPointD previous = m_japanesePegLastWorld;
+  const TPointD delta = newWorld - previous;
+  // A stale mouse event after a scene/window change must not move a layer
+  // by an arbitrarily large distance.
+  if (std::abs(delta.x) > 100.0 * Stage::inch ||
+      std::abs(delta.y) > 100.0 * Stage::inch) {
+    m_japanesePegLastWorld = newWorld;
+    return;
+  }
   m_japanesePegLastWorld = newWorld;
 
   if (m_japanesePegEditTarget > 0) {
-    TOnionSkinMaskHandle *handle = TApp::instance()->getCurrentOnionSkin();
-    OnionSkinMask osm = handle->getOnionSkinMask();
     const int ghost = m_japanesePegEditTarget - 1;
+    if (ghost < 0 || ghost > 1) return;
+    TOnionSkinMaskHandle *handle = app->getCurrentOnionSkin();
+    OnionSkinMask osm = handle->getOnionSkinMask();
+    if (!osm.isShiftTraceEnabled()) return;
     TAffine aff = osm.getShiftTraceGhostAff(ghost);
+    if (!japanesePegFiniteAffine(aff)) return;
     if (rotate) {
-      const TPointD center =
-          japanesePegGhostAffine(ghost) * TPointD();
-      const double angle = (newWorld.x - previous.x) * 0.15;
-      aff = TRotation(center, angle) * aff;
+      const TAffine ghostBase = japanesePegGhostAffine(ghost);
+      if (!japanesePegFiniteAffine(ghostBase)) return;
+      const TPointD center = ghostBase * TPointD();
+      if (!japanesePegFinitePoint(center)) return;
+      aff = TRotation(center, delta.x * 0.15) * aff;
     } else {
-      aff = TTranslation(newWorld - previous) * aff;
+      aff = TTranslation(delta) * aff;
     }
+    if (!japanesePegFiniteAffine(aff)) return;
     osm.setShiftTraceGhostAff(ghost, aff);
     handle->setOnionSkinMask(osm);
   } else if (rotate) {
-    m_japanesePegRotation += (newWorld.x - previous.x) * 0.15;
+    const double angle = m_japanesePegRotation + delta.x * 0.15;
+    if (!std::isfinite(angle)) return;
+    m_japanesePegRotation = std::fmod(angle, 360.0);
   } else if (m_japanesePegDragObjectId != TStageObjectId::NoneId) {
-    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+    if (!xsh || xsh != m_japanesePegDragXsheet ||
+        m_japanesePegDragFrame < 0) {
+      m_japanesePegDragging = false;
+      m_japanesePegDragObjectId = TStageObjectId::NoneId;
+      m_japanesePegDragXsheet = nullptr;
+      return;
+    }
     TStageObject *obj = xsh->getStageObject(m_japanesePegDragObjectId);
+    if (!obj || obj->isLocked() || obj->getStatus() != TStageObject::XY)
+      return;
     const TAffine parent =
         xsh->getParentPlacement(m_japanesePegDragObjectId,
                                 m_japanesePegDragFrame);
-    if (obj && std::abs(parent.det()) > 1e-10) {
-      const TPointD delta =
-          parent.inv() * newWorld - parent.inv() * previous;
-      obj->setParam(TStageObject::T_X, m_japanesePegDragFrame,
-                    obj->getParam(TStageObject::T_X, m_japanesePegDragFrame) +
-                        delta.x / Stage::inch);
-      obj->setParam(TStageObject::T_Y, m_japanesePegDragFrame,
-                    obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame) +
-                        delta.y / Stage::inch);
-      TApp::instance()->getCurrentObject()->notifyObjectIdChanged(true);
-      TApp::instance()->getCurrentScene()->setDirtyFlag(true);
-    }
+    if (!japanesePegInvertibleAffine(parent)) return;
+    const TAffine inverseParent = parent.inv();
+    const TPointD localDelta =
+        inverseParent * newWorld - inverseParent * previous;
+    if (!japanesePegFinitePoint(localDelta)) return;
+    const double x =
+        obj->getParam(TStageObject::T_X, m_japanesePegDragFrame) +
+        localDelta.x / Stage::inch;
+    const double y =
+        obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame) +
+        localDelta.y / Stage::inch;
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    obj->setParam(TStageObject::T_X, m_japanesePegDragFrame, x);
+    obj->setParam(TStageObject::T_Y, m_japanesePegDragFrame, y);
+    app->getCurrentObject()->notifyObjectIdChanged(true);
+    app->getCurrentScene()->setDirtyFlag(true);
   } else {
-    // A registration-only adjustment does not modify the source drawing.
-    if (m_japanesePegFollowObject) {
-      TApp *app = TApp::instance();
+    // Overlay-only adjustments never modify the source artwork.
+    TPointD offsetDelta = delta;
+    if (m_japanesePegFollowObject &&
+        app->getCurrentFrame()->isEditingScene()) {
       const TStageObjectId id = app->getCurrentObject()->getObjectId();
-      if (app->getCurrentFrame()->isEditingScene() &&
-          (id.isColumn() || id.isPegbar())) {
-        TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+      TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+      if (xsh && (id.isColumn() || id.isPegbar()) &&
+          xsh->getStageObject(id)) {
         const TAffine placement =
             xsh->getPlacement(id, app->getCurrentFrame()->getFrame());
-        if (std::abs(placement.det()) > 1e-10) {
-          m_japanesePegOffset +=
-              placement.inv() * newWorld - placement.inv() * previous;
+        if (japanesePegInvertibleAffine(placement)) {
+          const TAffine inverse = placement.inv();
+          offsetDelta = inverse * newWorld - inverse * previous;
         }
-      } else
-        m_japanesePegOffset += newWorld - previous;
-    } else
-      m_japanesePegOffset += newWorld - previous;
+      }
+    }
+    if (!japanesePegFinitePoint(offsetDelta)) return;
+    const TPointD nextOffset = m_japanesePegOffset + offsetDelta;
+    if (!japanesePegFinitePoint(nextOffset)) return;
+    m_japanesePegOffset = nextOffset;
   }
   GLInvalidateAll();
 }
@@ -3929,23 +4070,30 @@ void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
 void SceneViewer::endJapanesePegBarDrag() {
   if (!m_japanesePegDragging) return;
   m_japanesePegDragging = false;
-  if (m_japanesePegDragObjectId != TStageObjectId::NoneId) {
-    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  TApp *app = TApp::instance();
+  TXsheet *xsh = (app && app->getCurrentXsheet())
+                     ? app->getCurrentXsheet()->getXsheet()
+                     : nullptr;
+  if (xsh && xsh == m_japanesePegDragXsheet &&
+      m_japanesePegDragObjectId != TStageObjectId::NoneId &&
+      m_japanesePegDragFrame >= 0) {
     TStageObject *obj = xsh->getStageObject(m_japanesePegDragObjectId);
-    if (obj) {
+    if (obj && !obj->isLocked()) {
       const double x = obj->getParam(TStageObject::T_X, m_japanesePegDragFrame);
       const double y = obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame);
-      if (std::abs(x - m_japanesePegDragOldX) > 1e-9 ||
-          std::abs(y - m_japanesePegDragOldY) > 1e-9) {
+      if (std::isfinite(x) && std::isfinite(y) &&
+          (std::abs(x - m_japanesePegDragOldX) > 1e-9 ||
+           std::abs(y - m_japanesePegDragOldY) > 1e-9)) {
         TUndoManager::manager()->add(new JapanesePegMoveUndo(
             xsh, m_japanesePegDragObjectId, m_japanesePegDragFrame,
             m_japanesePegDragOldX, m_japanesePegDragOldY, x, y));
-        TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+        app->getCurrentXsheet()->notifyXsheetChanged();
       }
     }
   }
   m_japanesePegDragObjectId = TStageObjectId::NoneId;
   m_japanesePegDragFrame = -1;
+  m_japanesePegDragXsheet = nullptr;
 }
 
 void SceneViewer::addJapanesePegBarMenu(QMenu *menu) {

@@ -210,6 +210,7 @@ class SceneViewer final : public TToolViewer, public Previewer::Listener {
   TPointD m_japanesePegOffset;
   TPointD m_japanesePegLastWorld;
   TStageObjectId m_japanesePegDragObjectId = TStageObjectId::NoneId;
+  TXsheet *m_japanesePegDragXsheet = nullptr; // identity only; never dereference
   int m_japanesePegDragFrame = -1;
   double m_japanesePegDragOldX = 0.0;
   double m_japanesePegDragOldY = 0.0;

@@ -490,7 +490,11 @@ void SceneViewer::onEnter() {
 
 void SceneViewer::mouseMoveEvent(QMouseEvent *event) {
   if (m_japanesePegDragging) {
-    dragJapanesePegBar(event->localPos(), event->modifiers() & Qt::ShiftModifier);
+    if (!(event->buttons() & Qt::LeftButton))
+      endJapanesePegBarDrag();
+    else
+      dragJapanesePegBar(event->localPos(),
+                         event->modifiers() & Qt::ShiftModifier);
     event->accept();
     return;
   }
@@ -728,13 +732,6 @@ void SceneViewer::onMove(const TMouseEvent &event) {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::mousePressEvent(QMouseEvent *event) {
-  // Registration is picked before painting tools, so a peg-bar drag cannot
-  // accidentally begin an ink stroke on the animation drawing.
-  if (event->button() == Qt::LeftButton && !m_tabletEvent &&
-      beginJapanesePegBarDrag(event->localPos())) {
-    event->accept();
-    return;
-  }
   // source can be useful for detecting touch vs mouse,
   // but has reports of being unreliable on mac
   // so m_gestureActive is the marker for rejecting touch events
@@ -743,6 +740,13 @@ void SceneViewer::mousePressEvent(QMouseEvent *event) {
   if (m_tabletEvent) return;
   // and touchscreens but not touchpads...
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) {
+    return;
+  }
+  // Pick registration only after tablet/touch filtering. Do not intercept
+  // stylus gestures or leave a stale drag in the viewer.
+  if (event->button() == Qt::LeftButton &&
+      beginJapanesePegBarDrag(event->localPos())) {
+    event->accept();
     return;
   }
   // For now OSX has a critical problem that mousePressEvent is called just
