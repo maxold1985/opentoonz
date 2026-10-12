@@ -65,6 +65,8 @@
 #include "toonz/txshleveltypes.h"
 #include "subcameramanager.h"
 #include "toutputproperties.h"
+#include "japanese_registration_pegbar.h"
+#include "tundo.h"
 
 // TnzCore includes
 #include "tpalette.h"
@@ -88,6 +90,8 @@
 #include <QGLContext>
 #include <QOpenGLFramebufferObject>
 #include <QMainWindow>
+#include <QActionGroup>
+#include <QInputDialog>
 
 #include "sceneviewer.h"
 
@@ -1795,6 +1799,8 @@ void SceneViewer::drawOverlay() {
     assert(glGetError() == GL_NO_ERROR);
 
   }  //! cameraTest
+
+  drawJapanesePegBars();
 
   // draw 3d Top/Side Buttons
   if (m_draw3DMode && !m_isPicking) {
@@ -3633,4 +3639,376 @@ void SceneViewer::registerContext() {
   TGlContext tglContext(tglGetCurrentContext());
   TGLDisplayListsManager::instance()->attachContext(displayListId, tglContext);
   l_contexts.insert(tglContext);
+}
+
+
+//=============================================================================
+// Japanese animation paper registration (viewer-only)
+//=============================================================================
+
+namespace {
+
+// A stage-object movement is a real Xsheet edit; keep it separately undoable.
+// Merely displaying or moving the registration overlay never changes artwork.
+class JapanesePegMoveUndo final : public TUndo {
+  TXsheet *m_xsheet;
+  TStageObjectId m_id;
+  int m_frame;
+  double m_fromX, m_fromY, m_toX, m_toY;
+
+  void apply(double x, double y) const {
+    TApp *app = TApp::instance();
+    if (app->getCurrentXsheet()->getXsheet() != m_xsheet) return;
+    TStageObject *obj = m_xsheet->getStageObject(m_id);
+    if (!obj || obj->isLocked()) return;
+    obj->setParam(TStageObject::T_X, m_frame, x);
+    obj->setParam(TStageObject::T_Y, m_frame, y);
+    app->getCurrentObject()->notifyObjectIdChanged(false);
+    app->getCurrentXsheet()->notifyXsheetChanged();
+    app->getCurrentScene()->setDirtyFlag(true);
+  }
+
+public:
+  JapanesePegMoveUndo(TXsheet *xsheet, TStageObjectId id, int frame,
+                      double x0, double y0, double x1, double y1)
+      : m_xsheet(xsheet), m_id(id), m_frame(frame), m_fromX(x0),
+        m_fromY(y0), m_toX(x1), m_toY(y1) {}
+
+  int getSize() const override { return sizeof(*this); }
+  void undo() const override { apply(m_fromX, m_fromY); }
+  void redo() const override { apply(m_toX, m_toY); }
+  QString getHistoryString() override {
+    return QObject::tr("Move Layer with Japanese Peg Bar");
+  }
+};
+
+void drawJapaneseRegistrationShape(double unitsPerMm, float red, float green,
+                                   float blue, float opacity, bool active) {
+  JapaneseRegistration::PegBar peg;
+  const auto holes = peg.holes(unitsPerMm);
+  const double halfWidth = peg.outerSpacingMm * unitsPerMm * 0.5 +
+                           10.0 * unitsPerMm;
+  const double halfHeight = 7.0 * unitsPerMm;
+
+  // Neutral translucent strip, similar to translucent animation paper.
+  glColor4f(red, green, blue, opacity * 0.26f);
+  glBegin(GL_QUADS);
+  glVertex2d(-halfWidth, -halfHeight);
+  glVertex2d( halfWidth, -halfHeight);
+  glVertex2d( halfWidth,  halfHeight);
+  glVertex2d(-halfWidth,  halfHeight);
+  glEnd();
+
+  glLineWidth(active ? 2.0f : 1.0f);
+  glColor4f(red, green, blue, opacity);
+  glBegin(GL_LINE_LOOP);
+  glVertex2d(-halfWidth, -halfHeight);
+  glVertex2d( halfWidth, -halfHeight);
+  glVertex2d( halfWidth,  halfHeight);
+  glVertex2d(-halfWidth,  halfHeight);
+  glEnd();
+
+  // Three Japanese registration marks: one round hole, two horizontal slots.
+  // They are outlines, so the drawing underneath remains fully visible.
+  for (const auto &hole : holes) {
+    const double cx = hole.center.x, cy = hole.center.y;
+    const double rx = hole.width * 0.5, ry = hole.height * 0.5;
+    const int segments = hole.type == JapaneseRegistration::HoleType::Round
+                             ? 40 : 48;
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < segments; ++i) {
+      const double theta = 6.283185307179586 * i / segments;
+      // Horizontal capsule for slot holes: rounded ends, straight middle.
+      const double radius = ry;
+      const double offset = (hole.type ==
+          JapaneseRegistration::HoleType::HorizontalSlot)
+          ? std::max(0.0, rx - radius) : 0.0;
+      const double x = cx + std::cos(theta) * radius +
+                       (std::cos(theta) >= 0.0 ? offset : -offset);
+      const double y = cy + std::sin(theta) * radius;
+      glVertex2d(x, y);
+    }
+    glEnd();
+  }
+  glLineWidth(1.0f);
+}
+}  // namespace
+
+TAffine SceneViewer::japanesePegBaseAffine() const {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene || !scene->getCurrentCamera()) return TAffine();
+
+  const TRectD paper = scene->getCurrentCamera()->getStageRect();
+  const TPointD anchor((paper.x0 + paper.x1) * 0.5,
+                       paper.y1 - 0.35 * Stage::inch);
+  TAffine result = TTranslation(anchor + m_japanesePegOffset) *
+                   TRotation(m_japanesePegRotation);
+
+  if (m_japanesePegFollowObject && app->getCurrentFrame()->isEditingScene()) {
+    const TStageObjectId id = app->getCurrentObject()->getObjectId();
+    if (id.isColumn() || id.isPegbar()) {
+      TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+      if (xsh) result = xsh->getPlacement(id, app->getCurrentFrame()->getFrame()) *
+                         result;
+    }
+  }
+  return result;
+}
+
+void SceneViewer::drawJapanesePegBars() {
+  if (!m_japanesePegVisible || m_drawCameraTest || m_draw3DMode ||
+      m_isPicking || isPreviewEnabled()) return;
+
+  const double unitsPerMm = Stage::inch / 25.4;
+  const TAffine base = japanesePegBaseAffine();
+  const OnionSkinMask osm =
+      TApp::instance()->getCurrentOnionSkin()->getOnionSkinMask();
+
+  glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT |
+               GL_LINE_BIT | GL_DEPTH_BUFFER_BIT);
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  // Draw adjacent registered papers before the current sheet.
+  if (m_japanesePegShowGhosts) {
+    for (int ghost = 0; ghost < 2; ++ghost) {
+      glPushMatrix();
+      tglMultMatrix(getViewMatrix() * osm.getShiftTraceGhostAff(ghost) * base);
+      const bool active = m_japanesePegEditTarget == ghost + 1;
+      if (ghost == 0)
+        drawJapaneseRegistrationShape(unitsPerMm, 0.15f, 0.85f, 0.45f,
+                                      (float)m_japanesePegOpacity * 0.65f,
+                                      active);
+      else
+        drawJapaneseRegistrationShape(unitsPerMm, 1.0f, 0.35f, 0.48f,
+                                      (float)m_japanesePegOpacity * 0.65f,
+                                      active);
+      glPopMatrix();
+    }
+  }
+
+  glPushMatrix();
+  tglMultMatrix(getViewMatrix() * base);
+  drawJapaneseRegistrationShape(unitsPerMm, 0.30f, 0.65f, 1.0f,
+                                (float)m_japanesePegOpacity,
+                                m_japanesePegEditTarget == 0);
+  glPopMatrix();
+  glPopAttrib();
+}
+
+bool SceneViewer::beginJapanesePegBarDrag(const QPointF &widgetPos) {
+  if (!m_japanesePegVisible || isPreviewEnabled() || is3DView() ||
+      m_freezedStatus != NO_FREEZED) return false;
+  const OnionSkinMask osm =
+      TApp::instance()->getCurrentOnionSkin()->getOnionSkinMask();
+  if (m_japanesePegEditTarget != 0 && !osm.isShiftTraceEnabled()) return false;
+
+  TAffine aff = japanesePegBaseAffine();
+  if (m_japanesePegEditTarget)
+    aff = osm.getShiftTraceGhostAff(m_japanesePegEditTarget - 1) * aff;
+  if (std::abs(aff.det()) < 1e-10) return false;
+
+  const TPointD world = winToWorld(widgetPos * getDevPixRatio());
+  const TPointD local = aff.inv() * world;
+  const double unitsPerMm = Stage::inch / 25.4;
+  const double halfWidth  = 60.0 * unitsPerMm;
+  const double halfHeight = 7.0 * unitsPerMm;
+  if (std::abs(local.x) > halfWidth ||
+      std::abs(local.y) > halfHeight) return false;
+
+  m_japanesePegDragging = true;
+  m_japanesePegLastWorld = world;
+  m_japanesePegDragObjectId = TStageObjectId::NoneId;
+  m_japanesePegDragFrame = -1;
+
+  if (m_japanesePegEditTarget == 0 && m_japanesePegMoveObject &&
+      m_japanesePegFollowObject &&
+      TApp::instance()->getCurrentFrame()->isEditingScene()) {
+    TStageObjectId id = TApp::instance()->getCurrentObject()->getObjectId();
+    if (id.isColumn() || id.isPegbar()) {
+      TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+      TStageObject *obj = xsh ? xsh->getStageObject(id) : nullptr;
+      if (obj && !obj->isLocked() && obj->getStatus() == TStageObject::XY) {
+        m_japanesePegDragObjectId = id;
+        m_japanesePegDragFrame = TApp::instance()->getCurrentFrame()->getFrame();
+        m_japanesePegDragOldX =
+            obj->getParam(TStageObject::T_X, m_japanesePegDragFrame);
+        m_japanesePegDragOldY =
+            obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame);
+      }
+    }
+  }
+  return true;
+}
+
+void SceneViewer::dragJapanesePegBar(const QPointF &widgetPos, bool rotate) {
+  if (!m_japanesePegDragging) return;
+  TPointD newWorld = winToWorld(widgetPos * getDevPixRatio());
+  const TPointD previous = m_japanesePegLastWorld;
+  m_japanesePegLastWorld = newWorld;
+
+  if (m_japanesePegEditTarget > 0) {
+    TOnionSkinMaskHandle *handle = TApp::instance()->getCurrentOnionSkin();
+    OnionSkinMask osm = handle->getOnionSkinMask();
+    const int ghost = m_japanesePegEditTarget - 1;
+    TAffine aff = osm.getShiftTraceGhostAff(ghost);
+    if (rotate) {
+      const TPointD center = aff * japanesePegBaseAffine() * TPointD();
+      const double angle = (newWorld.x - previous.x) * 0.15;
+      aff = TRotation(center, angle) * aff;
+    } else {
+      aff = TTranslation(newWorld - previous) * aff;
+    }
+    osm.setShiftTraceGhostAff(ghost, aff);
+    handle->setOnionSkinMask(osm);
+  } else if (rotate) {
+    m_japanesePegRotation += (newWorld.x - previous.x) * 0.15;
+  } else if (m_japanesePegDragObjectId != TStageObjectId::NoneId) {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    TStageObject *obj = xsh->getStageObject(m_japanesePegDragObjectId);
+    const TAffine parent =
+        xsh->getParentPlacement(m_japanesePegDragObjectId,
+                                m_japanesePegDragFrame);
+    if (obj && std::abs(parent.det()) > 1e-10) {
+      const TPointD delta =
+          parent.inv() * newWorld - parent.inv() * previous;
+      obj->setParam(TStageObject::T_X, m_japanesePegDragFrame,
+                    obj->getParam(TStageObject::T_X, m_japanesePegDragFrame) +
+                        delta.x / Stage::inch);
+      obj->setParam(TStageObject::T_Y, m_japanesePegDragFrame,
+                    obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame) +
+                        delta.y / Stage::inch);
+      TApp::instance()->getCurrentObject()->notifyObjectIdChanged(true);
+      TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    }
+  } else {
+    // A registration-only adjustment does not modify the source drawing.
+    const TAffine base = japanesePegBaseAffine();
+    if (m_japanesePegFollowObject) {
+      TApp *app = TApp::instance();
+      const TStageObjectId id = app->getCurrentObject()->getObjectId();
+      if (app->getCurrentFrame()->isEditingScene() &&
+          (id.isColumn() || id.isPegbar())) {
+        TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+        const TAffine placement =
+            xsh->getPlacement(id, app->getCurrentFrame()->getFrame());
+        if (std::abs(placement.det()) > 1e-10) {
+          m_japanesePegOffset +=
+              placement.inv() * newWorld - placement.inv() * previous;
+        }
+      } else
+        m_japanesePegOffset += newWorld - previous;
+    } else
+      m_japanesePegOffset += newWorld - previous;
+    (void)base;
+  }
+  GLInvalidateAll();
+}
+
+void SceneViewer::endJapanesePegBarDrag() {
+  if (!m_japanesePegDragging) return;
+  m_japanesePegDragging = false;
+  if (m_japanesePegDragObjectId != TStageObjectId::NoneId) {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    TStageObject *obj = xsh->getStageObject(m_japanesePegDragObjectId);
+    if (obj) {
+      const double x = obj->getParam(TStageObject::T_X, m_japanesePegDragFrame);
+      const double y = obj->getParam(TStageObject::T_Y, m_japanesePegDragFrame);
+      if (std::abs(x - m_japanesePegDragOldX) > 1e-9 ||
+          std::abs(y - m_japanesePegDragOldY) > 1e-9) {
+        TUndoManager::manager()->add(new JapanesePegMoveUndo(
+            xsh, m_japanesePegDragObjectId, m_japanesePegDragFrame,
+            m_japanesePegDragOldX, m_japanesePegDragOldY, x, y));
+        TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      }
+    }
+  }
+  m_japanesePegDragObjectId = TStageObjectId::NoneId;
+  m_japanesePegDragFrame = -1;
+}
+
+void SceneViewer::addJapanesePegBarMenu(QMenu *menu) {
+  QMenu *pegMenu = menu->addMenu(tr("Japanese Registration Peg Bar"));
+  QAction *show = pegMenu->addAction(tr("Show Transparent Peg Bars"));
+  show->setCheckable(true);
+  show->setChecked(m_japanesePegVisible);
+  connect(show, &QAction::toggled, this, [this](bool on) {
+    m_japanesePegVisible = on;
+    GLInvalidateAll();
+  });
+
+  QAction *ghosts = pegMenu->addAction(tr("Overlay Previous / Next Peg Bars"));
+  ghosts->setCheckable(true);
+  ghosts->setChecked(m_japanesePegShowGhosts);
+  connect(ghosts, &QAction::toggled, this, [this](bool on) {
+    m_japanesePegShowGhosts = on;
+    GLInvalidateAll();
+  });
+
+  QAction *follow = pegMenu->addAction(tr("Follow Selected Layer / Pegbar"));
+  follow->setCheckable(true);
+  follow->setChecked(m_japanesePegFollowObject);
+  connect(follow, &QAction::toggled, this, [this](bool on) {
+    m_japanesePegFollowObject = on;
+    GLInvalidateAll();
+  });
+
+  QAction *moveLayer = pegMenu->addAction(tr("Drag Peg Bar to Move Selected Layer"));
+  moveLayer->setCheckable(true);
+  moveLayer->setChecked(m_japanesePegMoveObject);
+  connect(moveLayer, &QAction::toggled, this, [this](bool on) {
+    m_japanesePegMoveObject = on;
+  });
+
+  pegMenu->addSeparator();
+  QMenu *target = pegMenu->addMenu(tr("Drag Target"));
+  QActionGroup *group = new QActionGroup(target);
+  const char *labels[] = {"Current Paper", "Previous Ghost (Shift and Trace)",
+                           "Next Ghost (Shift and Trace)"};
+  for (int n = 0; n != 3; ++n) {
+    QAction *item = target->addAction(tr(labels[n]));
+    item->setCheckable(true);
+    item->setChecked(n == m_japanesePegEditTarget);
+    group->addAction(item);
+    connect(item, &QAction::triggered, this, [this, n] {
+      m_japanesePegEditTarget = n;
+      GLInvalidateAll();
+    });
+  }
+
+  QMenu *opacity = pegMenu->addMenu(tr("Opacity"));
+  QActionGroup *opacityGroup = new QActionGroup(opacity);
+  for (int percent : {20, 35, 50, 70, 100}) {
+    QAction *item = opacity->addAction(QString::number(percent) + "%");
+    item->setCheckable(true);
+    item->setChecked(std::abs(m_japanesePegOpacity * 100 - percent) < 0.1);
+    opacityGroup->addAction(item);
+    connect(item, &QAction::triggered, this, [this, percent] {
+      m_japanesePegOpacity = percent / 100.0;
+      GLInvalidateAll();
+    });
+  }
+
+  QAction *angle = pegMenu->addAction(tr("Set Peg Bar Rotation..."));
+  connect(angle, &QAction::triggered, this, [this] {
+    bool ok = false;
+    double value = QInputDialog::getDouble(
+        this, tr("Japanese Peg Bar"), tr("Rotation (degrees):"),
+        m_japanesePegRotation, -360.0, 360.0, 1, &ok);
+    if (ok) {
+      m_japanesePegRotation = value;
+      GLInvalidateAll();
+    }
+  });
+  QAction *reset = pegMenu->addAction(tr("Reset Peg Bar Position / Rotation"));
+  connect(reset, &QAction::triggered, this, [this] {
+    m_japanesePegOffset = TPointD();
+    m_japanesePegRotation = 0;
+    GLInvalidateAll();
+  });
+  QAction *info = pegMenu->addAction(
+      tr("Drag to move; Shift + drag to rotate. Ghosts require Shift and Trace."));
+  info->setEnabled(false);
 }
