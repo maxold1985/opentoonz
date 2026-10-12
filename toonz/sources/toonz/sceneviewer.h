@@ -20,6 +20,7 @@
 // Toonz includes
 #include "pane.h"
 #include "previewer.h"
+#include "toonz/tstageobjectid.h"
 
 #include <array>
 #include <QMatrix4x4>
@@ -196,6 +197,23 @@ class SceneViewer final : public TToolViewer, public Previewer::Listener {
 
   bool m_firstInitialized = true;
 
+  // Japanese paper-registration overlay. This is viewer-only geometry: it is
+  // never painted into a level, camera render, or export.
+  bool m_japanesePegVisible = false;
+  bool m_japanesePegShowGhosts = true;
+  bool m_japanesePegFollowObject = true;
+  bool m_japanesePegMoveObject = false;
+  bool m_japanesePegDragging = false;
+  int m_japanesePegEditTarget = 0; // 0: sheet, 1: previous, 2: next
+  double m_japanesePegOpacity = 0.45;
+  double m_japanesePegRotation = 0.0; // degrees
+  TPointD m_japanesePegOffset;
+  TPointD m_japanesePegLastWorld;
+  TStageObjectId m_japanesePegDragObjectId = TStageObjectId::NoneId;
+  int m_japanesePegDragFrame = -1;
+  double m_japanesePegDragOldX = 0.0;
+  double m_japanesePegDragOldY = 0.0;
+
 public:
   enum ReferenceMode {
     NORMAL_REFERENCE   = 1,
@@ -335,6 +353,12 @@ protected:
   void drawCameraStand();
   void drawPreview();
   void drawOverlay();
+  void drawJapanesePegBars();
+  TAffine japanesePegBaseAffine() const;
+  void addJapanesePegBarMenu(QMenu *menu);
+  bool beginJapanesePegBarDrag(const QPointF &widgetPos);
+  void dragJapanesePegBar(const QPointF &widgetPos, bool rotate);
+  void endJapanesePegBarDrag();
   void drawViewerIndicators();
 
   void drawScene();
