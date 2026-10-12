@@ -1427,7 +1427,8 @@ void TStageObjectCmd::addNewPegbar(TXsheetHandle *xshHandle,
   pegbarCol->setPegbarObjectId(id);
   xsh->insertColumn(col, pegbarCol);
 
-  TUndoManager::manager()->add(new NewPegbarUndo(id, xshHandle, objHandle, col));
+  TUndoManager::manager()->add(
+      new NewPegbarUndo(id, xshHandle, objHandle, col));
   xshHandle->notifyXsheetChanged();
 }
 
@@ -1507,8 +1508,8 @@ void TStageObjectCmd::deleteSelection(
     if (it2->isColumn()) columnIndexes.append(it2->getIndex());
     if (it2->isPegbar()) {
       pegbarIndexes.append(it2->getIndex());
-      TXsheet *xsh           = xshHandle->getXsheet();
-      TXshColumn *pegbarCol  = xsh->getColumnForPegbarObjectId(*it2);
+      TXsheet *xsh          = xshHandle->getXsheet();
+      TXshColumn *pegbarCol = xsh->getColumnForPegbarObjectId(*it2);
       if (pegbarCol) columnIndexes.append(pegbarCol->getIndex());
     }
     if (it2->isCamera()) cameraIndexes.append(it2->getIndex());
